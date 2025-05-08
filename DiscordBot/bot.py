@@ -18,8 +18,6 @@ REASON_MAP = {
     "6": "False Information"
 }
 
-GROUP_NUM = 23
-
 # Set up logging to the console
 logger = logging.getLogger("discord")
 logger.setLevel(logging.DEBUG)

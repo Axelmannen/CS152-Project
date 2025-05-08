@@ -70,7 +70,7 @@ class ModReport:
             content=
                 f"**NEW REPORT**\n"
                 f"**Reason**: {report.REPORT_REASONS[report.reason_key]} → {report.subreason}\n"
-                f"**Details**: {report.followup_response or '-'}\n"
+                f"**Details**: {', '.join(report.followups) if report.followups else '-'}\n"
                 f"**Reporting User**: {report.message.author.name}\n"
                 f"**Flag**: {report.flag or 'None'}\n"
                 f"**Reported User**: {report.message.author.name}\n"
