@@ -1,7 +1,7 @@
 from enum import Enum, auto
 import discord
-import re
 from discord.ui import View, Select, Button
+from mod_report import ModReport
 
 class State(Enum):
     REPORT_START = auto()
@@ -143,10 +143,6 @@ class GoBackToReasonButton(Button):
         )
 
 class Report:
-    START_KEYWORD = "report"
-    CANCEL_KEYWORD = "cancel"
-    HELP_KEYWORD = "help"
-
     REPORT_REASONS = {
         "1": "Scam, fraud or spam",
         "2": "Bullying, hate or harassment",
@@ -174,47 +170,6 @@ class Report:
         self.followup_response = None
         self.flag = None
 
-    async def handle_message(self, message):
-        if message.content == self.CANCEL_KEYWORD:
-            self.state = State.REPORT_COMPLETE
-            return ["Report cancelled."]
-
-        if self.state == State.REPORT_START:
-            self.state = State.AWAITING_MESSAGE
-            return [
-                "Thank you for starting the reporting process.",
-                "Say `help` at any time for more information.",
-                "Please copy paste the link to the message you want to report.\n"
-                "You can obtain this link by right-clicking the message and clicking `Copy Message Link`."
-            ]
-
-        if self.state == State.AWAITING_MESSAGE:
-            m = re.search(r"/(\d+)/(\d+)/(\d+)", message.content)
-            if not m:
-                return ["I'm sorry, I couldn't read that link. Please try again or say `cancel` to cancel."]
-
-            guild = self.client.get_guild(int(m.group(1)))
-            if not guild:
-                return ["I cannot accept reports of messages from guilds that I'm not in. Please have the guild owner add me to the guild and try again."]
-
-            channel = guild.get_channel(int(m.group(2)))
-            if not channel:
-                return ["It seems this channel was deleted or never existed. Please try again or say `cancel` to cancel."]
-
-            try:
-                self.message = await channel.fetch_message(int(m.group(3)))
-            except discord.errors.NotFound:
-                return ["It seems this message was deleted or never existed. Please try again or say `cancel` to cancel."]
-
-            self.state = State.AWAITING_REASON
-            await message.channel.send(
-                f"I found this message:\n```{self.message.author.name}: {self.message.content}```",
-                view=ReasonDropdownView(self)
-            )
-            return []
-
-        return []
-
     def report_complete(self):
         return self.state == State.REPORT_COMPLETE
 
@@ -223,14 +178,6 @@ class Report:
             self.client.reports.pop(user_id)
 
     async def log_to_mods(self, user):
-        for guild in self.client.guilds:
-            for channel in guild.text_channels:
-                if channel.name == "group-23-mod":
-                    await channel.send(
-                        f"📣 User `{user.name}` reported a message:\n"
-                        f"**Reason**: {self.REPORT_REASONS[self.reason_key]} → {self.subreason}\n"
-                        f"**Details**: {self.followup_response or '-'}\n"
-                        f"**Flag**: {self.flag or 'None'}\n"
-                        f"**Message**: `{self.message.author.name}: {self.message.content}`\n"
-                        f"**Link**: {self.message.jump_url}"
-                    )
+        for mod_channel in self.client.mod_channels.values():
+            mod_report = await ModReport.create(mod_channel, self, self.client.user.id)
+            self.client.mod_reports[mod_report.thread.id] = mod_report

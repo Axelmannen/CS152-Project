@@ -1,12 +1,8 @@
 import discord
-from discord.ext import commands
 import os
 import json
 import logging
-import re
-import requests
 from report import Report, ReasonDropdownView
-import pdb
 from mod_report import ModReport
 
 GROUP_NUM = 23
@@ -21,6 +17,8 @@ REASON_MAP = {
     "5": "Nudity or Sexual Activity",
     "6": "False Information"
 }
+
+GROUP_NUM = 23
 
 # Set up logging to the console
 logger = logging.getLogger("discord")
@@ -37,71 +35,92 @@ with open(token_path) as f:
     tokens = json.load(f)
     discord_token = tokens["discord"]
 
-intents = discord.Intents.default()
-intents.message_content = True
-intents.reactions = True
-intents.members = True
-bot = commands.Bot(command_prefix="!", intents=intents)
 
-bot.reports = {}
-mod_channels = {}
-mod_reports = {}
+class ModBot(discord.Client):
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        intents.reactions = True
+        super().__init__(intents=intents)
 
-@bot.event
-async def on_ready():
-    print(f"{bot.user.name} has connected to Discord! It's in these guilds:")
-    for guild in bot.guilds:
-        print(f" - {guild.name}")
-        for channel in guild.text_channels:
-            if channel.name == f"group-{GROUP_NUM}-mod":
-                mod_channels[guild.id] = channel
+        self.group_num = None
+        self.content_channels = {}  # Map from guild to the content channel id for that guild
+        self.mod_channels = {}  # Map from guild to the mod channel id for that guild
+        self.reports = {}  # Map from user IDs to the state of their report
+        self.mod_reports = {}  # Map from thread IDs to the state of their report
 
-@bot.event
-async def on_message(message):
-    if message.author == bot.user:
-        return
+    async def on_ready(self):
+        print(f"{self.user.name} has connected to Discord! It's in these guilds:")
+        for guild in self.guilds:
+            print(f" - {guild.name}")
+        print("Press Ctrl-C to quit.")
 
-    if isinstance(message.channel, discord.DMChannel):
+        self.group_num = GROUP_NUM
+
+        # Find the content and mod channel in each guild
+        for guild in self.guilds:
+            for channel in guild.text_channels:
+                if channel.name == f"group-{self.group_num}":
+                    self.content_channels[guild.id] = channel
+                if channel.name == f"group-{self.group_num}-mod":
+                    self.mod_channels[guild.id] = channel
+
+    async def on_message(self, message):
+        # Check if this message was sent in a server ("guild") or if it's a DM
+        if message.guild:
+            await self.handle_channel_message(message)
+        else:
+            await self.handle_dm(message)
+
+    async def handle_dm(self, message):
+        if message.author.id == self.user.id:
+            return
         await message.channel.send("Use the ❗ reaction in the server to start a report.")
-    elif message.channel.name == f"group-{GROUP_NUM}":
-        mod_channel = mod_channels.get(message.guild.id)
-        if mod_channel:
-            content = f'User: {message.author.name}\nMessage: "{message.content}"\nMessage Link: {message.jump_url}'
-            await mod_channel.send(content=content, embeds=message.embeds or None, files=[await a.to_file() for a in message.attachments])
 
-@bot.event
-async def on_raw_reaction_add(payload):
-    if payload.user_id == bot.user.id:
-        return
-
-    channel = bot.get_channel(payload.channel_id)
-    if not channel:
-        return
-
-    if isinstance(channel, discord.TextChannel) and channel.name == f"group-{GROUP_NUM}":
-        message = await channel.fetch_message(payload.message_id)
-        if payload.emoji.name == BEGIN_REPORT_EMOJI:
-            user = bot.get_user(payload.user_id)
-            if not user:
+    async def handle_channel_message(self, message):
+        if message.channel.name == f"group-{self.group_num}":
+            # Ignore messages from the bot (although bot should never post here)
+            if message.author.id == self.user.id:
                 return
+            # TODO: Automatic scanning of messages
 
-            report = Report(bot)
-            report.message = message
-            bot.reports[user.id] = report
+    async def on_raw_reaction_add(self, payload):
+        if payload.user_id == self.user.id:
+            return
 
-            try:
-                await user.send(
-                    f"You reacted with ❗ to report the following message:\n"
-                    f"```{message.author.name}: {message.content}```\n"
-                    f"[Click to view message]({message.jump_url})\n\n"
-                    "Let's begin the reporting process."
-                )
-                await user.send("Please select the reason for reporting this message:", view=ReasonDropdownView(report))
-            except discord.Forbidden:
-                print(f"[Error] Cannot DM user {user.name}. They likely have DMs disabled.")
+        # Get channel from cache if available, otherwise fetch from API
+        channel = self.get_channel(payload.channel_id)
+        if not channel:
+            channel = await self.fetch_channel(payload.channel_id)
 
-@bot.command()
-async def report(ctx):
-    await ctx.send("Please react to the message you'd like to report with ❗")
+        if isinstance(channel, discord.TextChannel) and channel.name == f"group-{GROUP_NUM}":
+            message = await channel.fetch_message(payload.message_id)
+            if payload.emoji.name == BEGIN_REPORT_EMOJI:
 
-bot.run(discord_token)
+                # Clear reaction
+                await message.clear_reaction(payload.emoji.name)
+
+                # Get user from cache if available, otherwise fetch from API
+                user = self.get_user(payload.user_id)
+                if not user:
+                    user = await self.fetch_user(payload.user_id)
+
+                report = Report(self)
+                report.message = message
+                self.reports[user.id] = report
+
+                try:
+                    await user.send(
+                        content=
+                        f"You reacted with ❗ to report the following [message]({message.jump_url}) by *{message.author.name}*:\n"
+                        f"```{message.content}```\n"
+                        "Please select the reason for reporting this message:",
+                        embeds=message.embeds or None,
+                        files=[await atch.to_file() for atch in message.attachments],
+                    )
+                    await user.send(view=ReasonDropdownView(report))
+                except discord.Forbidden:
+                    print(f"[Error] Cannot DM user {user.name}. They likely have DMs disabled.")
+
+client = ModBot()
+client.run(discord_token)
