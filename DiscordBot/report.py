@@ -16,24 +16,37 @@ class FollowUpView(View):
         super().__init__(timeout=60)
         self.report = report
         for label, flag in options:
-            self.add_item(FollowUpButton(label, flag, report))
+            self.add_item(FollowUpButton(button_label=label, log_value=f"{question}: {label}", flag=flag, report=report))
         self.add_item(CancelButton(report))
         
 
 class FollowUpButton(Button):
-    def __init__(self, label, flag, report):
-        super().__init__(label=label, style=discord.ButtonStyle.primary)
+    def __init__(self, button_label, log_value, flag, report):
+        super().__init__(label=button_label, style=discord.ButtonStyle.primary)
+        self.log_value = log_value  # What appears in mod report
         self.flag = flag
         self.report = report
 
     async def callback(self, interaction: discord.Interaction):
-        self.report.followup_response = self.label
+        self.report.followups.append(self.log_value)
+
+        # determine next step based on current stage
+        if self.flag in ["Self-targeted", "3rd-party"]:
+            await interaction.response.send_message(
+                "Would you like to block this user? Blocking this user will prevent them from interacting with you on this platform in the future.",
+                view=FollowUpView(
+                    self.report,
+                    "Block User",
+                    [("Yes", "Block"), ("No", "NoBlock")]
+                )
+            )
+            return
+
         self.report.flag = self.flag
         self.report.state = State.REPORT_COMPLETE
         await interaction.response.send_message(
-            f"✅ You reported: **{self.report.REPORT_REASONS[self.report.reason_key]} → {self.report.subreason}**\n"
-            f"**Details**: {self.report.followup_response}\n"
-            "Our team will review the report."
+            f"✅ Thank you for reporting: **{reason} → {sub}**. Our internal team will decide on the appropriate action," + 
+            "including notifying law enforcement if necessary. "
         )
         await self.report.log_to_mods(interaction.user)
         self.report.cleanup(interaction.user.id)
@@ -43,7 +56,7 @@ class SubreasonDropdown(Select):
         self.report = report
         subreasons = Report.REPORT_SUBREASONS.get(report.reason_key, [])
         options = [discord.SelectOption(label=sr) for sr in subreasons]
-        super().__init__(placeholder="Select a subreason for reporting...", options=options)
+        super().__init__(placeholder="What best describes the problem?", options=options)
 
     async def callback(self, interaction: discord.Interaction):
         self.disabled = True  # Lock the dropdown after selection
@@ -53,16 +66,38 @@ class SubreasonDropdown(Select):
         reason = self.report.REPORT_REASONS[self.report.reason_key]
         sub = self.report.subreason
 
-        if reason == "Suicide or self-injury":
-            await interaction.response.send_message(
-                "If you or someone you know needs help, call the Suicide and Crisis Lifeline at 988."
-            )
-            self.report.flag = "Mental Health"
-            self.report.state = State.REPORT_COMPLETE
-            await self.report.log_to_mods(interaction.user)
-            self.report.cleanup(interaction.user.id)
-            return
+        # suicide, self-injury, or eating disorders flow
+        if reason == "Suicide, self-injury, or eating disorders":
+            if sub == "Suicide or self-injury":
+                await interaction.response.send_message(
+                    "If you or someone you know needs help, call the Suicide and Crisis Lifeline at 988.\n\n"
+                    "✅ Thank you for reporting. Our internal team will decide on the appropriate action. "
+                    "If you or people you know have been personally affected by suicide, self-injury, or eating disorders, "
+                    "we recommend exploring the following resources:\n\n"
+                    "**[Suicide & Crisis Lifeline](https://988lifeline.org)**\n"
+                    "**[Mental Health Resources - NAMI](https://www.nami.org/support-education/nami-helpline/)**"
+                )
+                self.report.flag = "Mental Health"
+                self.report.state = State.REPORT_COMPLETE
+                await self.report.log_to_mods(interaction.user)
+                self.report.cleanup(interaction.user.id)
+                return
 
+            elif sub == "Eating disorder":
+                await interaction.response.send_message(
+                    "✅ Thank you for reporting. Our internal team will decide on the appropriate action. "
+                    "If you or people you know have been personally affected by suicide, self-injury, or eating disorders, "
+                    "we recommend exploring the following resources:\n\n"
+                    "**[Suicide & Crisis Lifeline](https://988lifeline.org)**\n"
+                    "**[Mental Health Resources - NAMI](https://www.nami.org/Support-Education/NAMI-HelpLine/Top-HelpLine-Resources)**"
+                )
+                self.report.flag = "Mental Health"
+                self.report.state = State.REPORT_COMPLETE
+                await self.report.log_to_mods(interaction.user)
+                self.report.cleanup(interaction.user.id)
+                return
+
+        # bullying, hate or harassment flow 
         if reason == "Bullying, hate or harassment" and sub == "Bullying":
             await interaction.response.send_message(
                 "Who is this bullying targeted toward?",
@@ -72,7 +107,10 @@ class SubreasonDropdown(Select):
                     [("Myself", "Self-targeted"), ("Someone else", "3rd-party")]
                 )
             )
-        elif reason == "Nudity or sexual activity" and sub == "Threatening to share nude images":
+            return  
+                 
+        # nudity or sexual activity flow
+        if reason == "Nudity or sexual activity":
             await interaction.response.send_message(
                 "Does this involve someone under 18?",
                 view=FollowUpView(
@@ -81,13 +119,16 @@ class SubreasonDropdown(Select):
                     [("Yes", "CSAM-related"), ("No", "Adult content")]
                 )
             )
-        else:
-            self.report.state = State.REPORT_COMPLETE
-            await interaction.response.send_message(
-                f"✅ You reported: **{reason} → {sub}**"
-            )
-            await self.report.log_to_mods(interaction.user)
-            self.report.cleanup(interaction.user.id)
+            return
+        
+        # default flow
+        self.report.state = State.REPORT_COMPLETE
+        await interaction.response.send_message(
+            f"✅ Thank you for reporting: **{reason} → {sub}**. Our internal team will decide on the appropriate action," + 
+            "including notifying law enforcement if necessary. "
+        )
+        await self.report.log_to_mods(interaction.user)
+        self.report.cleanup(interaction.user.id)
 
 class SubreasonDropdownView(View):
     def __init__(self, report):
@@ -100,7 +141,7 @@ class ReasonDropdown(Select):
     def __init__(self, report):
         self.report = report
         options = [discord.SelectOption(label=v, value=k) for k, v in report.REPORT_REASONS.items()]
-        super().__init__(placeholder="Select a reason for reporting...", options=options)
+        super().__init__(placeholder="Why are you reporting this post?", options=options)
 
     async def callback(self, interaction: discord.Interaction):
         self.disabled = True  # Lock the dropdown
@@ -138,7 +179,7 @@ class GoBackToReasonButton(Button):
         self.report.subreason = None
         self.report.state = State.AWAITING_REASON
         await interaction.response.send_message(
-            "Okay! Please select a different reason:",
+            "Okay, please select a different reason:",
             view=ReasonDropdownView(self.report)
         )
 
@@ -146,19 +187,19 @@ class Report:
     REPORT_REASONS = {
         "1": "Scam, fraud or spam",
         "2": "Bullying, hate or harassment",
-        "3": "Suicide or self-injury",
+        "3": "Suicide, self-injury, or eating disorders",
         "4": "Selling or promoting restricted items",
         "5": "Nudity or sexual activity",
         "6": "False information"
     }
 
     REPORT_SUBREASONS = {
-        "1": ["Fraud", "Spam", "Scam"],
-        "2": ["Hate speech", "Violence", "Bullying", "Terrorism"],
-        "3": ["Suicide", "Eating disorder"],
+        "1": ["Fraud or Spam", "Scam"],
+        "2": ["Hate speech", "Terrorism or organised crime", "Calling for violence", "Showing violence, death or severe injury", "Bullying"],
+        "3": ["Suicide or self-injury", "Eating disorder"],
         "4": ["Drugs", "Weapons", "Animals"],
-        "5": ["Nude images", "Prostitution", "Sexual exploitation", "Sexual activity", "Threatening to share nude images"],
-        "6": ["Misinformation", "Fake news", "Misleading content"]
+        "5": ["Threatening to share or sharing nude images", "Prostitution", "Sexual exploitation", "Nudity or sexual activity"],
+        "6": ["Misinformation", "Misleading content"]
     }
 
     def __init__(self, client):
@@ -168,6 +209,7 @@ class Report:
         self.reason_key = None
         self.subreason = None
         self.followup_response = None
+        self.followups = []
         self.flag = None
 
     def report_complete(self):
