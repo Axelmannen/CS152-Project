@@ -59,8 +59,13 @@ class SubreasonDropdown(Select):
         super().__init__(placeholder="What best describes the problem?", options=options)
 
     async def callback(self, interaction: discord.Interaction):
+        selected = self.values[0]
+
+        self.placeholder = selected
         self.disabled = True  # Lock the dropdown after selection
-        self.report.subreason = self.values[0]
+
+        await interaction.message.edit(view=self.view) # update to reflect lock
+        self.report.subreason = selected
         self.report.state = State.AWAITING_FOLLOWUP
 
         reason = self.report.REPORT_REASONS[self.report.reason_key]
@@ -144,7 +149,12 @@ class ReasonDropdown(Select):
         super().__init__(placeholder="Why are you reporting this post?", options=options)
 
     async def callback(self, interaction: discord.Interaction):
+        selected = self.report.REPORT_REASONS[self.values[0]]
+
+        self.placeholder = selected
         self.disabled = True  # Lock the dropdown
+        
+        await interaction.message.edit(view=self.view) # update to reflect lock
         self.report.reason_key = self.values[0]
         self.report.state = State.AWAITING_SUBREASON
         await interaction.response.send_message(
