@@ -1,2 +1,4 @@
 tokens.json
+my_tokens.json
+*tokens.json
 __pycache__

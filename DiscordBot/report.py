@@ -144,7 +144,7 @@ class SubreasonDropdown(Select):
         self.report.state = State.REPORT_COMPLETE
         await interaction.response.send_message(
             f"✅ Thank you for reporting: **{reason} → {sub}**. Our internal team will decide on the appropriate action," + 
-            "including notifying law enforcement if necessary. "
+            " including notifying law enforcement if necessary. "
         )
         await self.report.log_to_mods(interaction.user)
         self.report.cleanup(interaction.user.id)
@@ -184,7 +184,7 @@ class ReasonDropdown(Select):
     
         self.report.state = State.AWAITING_SUBREASON
         await interaction.response.send_message(
-            f"✅ You selected: **{self.report.REPORT_REASONS[self.report.reason_key]}**\n"
+            f"You selected: **{self.report.REPORT_REASONS[self.report.reason_key]}**\n"
             "Please select a subreason (or click 'Go Back'):",
             view=SubreasonDropdownView(self.report)
         )
@@ -241,6 +241,7 @@ class Report:
         self.state = State.REPORT_START
         self.client = client
         self.message = None
+        self.reporter = None
         self.reason_key = None
         self.subreason = None
         self.followup_response = None

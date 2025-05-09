@@ -1,9 +1,7 @@
-from ast import If
 from enum import Enum, auto
 import discord
 from discord.ui import View, Select
 import random
-import asyncio
 
 IN_PROGRESS_EMOJI = "🟨"
 COMPLETED_EMOJI = "✅"
@@ -48,7 +46,7 @@ INTERACTIVE_STATES = {
         "options": [
             discord.SelectOption(label="Remove post and delete user account", value="remove_and_delete_user"),
             discord.SelectOption(label="Remove post and warn user", value="remove_and_warn_user"),
-            discord.SelectOption(label="Shadow block post", value="shadow_block_post"),
+            discord.SelectOption(label="Shadow block post and warn user", value="shadow_block_post_and_warn_user"),
             discord.SelectOption(label="Restore with note", value="restore_with_note"),
             discord.SelectOption(label="Escalate to specialist team", value="escalate_to_specialist_team"),
             discord.SelectOption(label="Restore post", value="restore"),
@@ -78,9 +76,9 @@ class ModReport:
         parent_message = await channel.send(
             content=
                 f"**NEW REPORT**\n"
+                f"**Reporter**: {report.reporter}\n"
                 f"**Reason**: {report.REPORT_REASONS[report.reason_key]} → {report.subreason}\n"
                 f"**Details**: {', '.join(report.followups) if report.followups else '-'}\n"
-                f"**Reporting User**: {report.message.author.name}\n"
                 f"**Flag**: {report.flag or 'None'}\n"
                 f"**Reported User**: {report.message.author.name}\n"
                 f"**Link**: {report.message.jump_url}\n"
@@ -105,7 +103,7 @@ class ModReport:
 
         if state in INTERACTIVE_STATES:
 
-            prompt = INTERACTIVE_STATES[self.state]["prompt"]
+            prompt = f"**{INTERACTIVE_STATES[self.state]["prompt"]}**"
             options = INTERACTIVE_STATES[self.state]["options"]
 
             select = Select(
@@ -126,36 +124,33 @@ class ModReport:
         elif state == State.INITIAL_CSAM:
             await self.thread.send("Content has been temporarily removed.")
             await self.set_state(State.HASH_MATCH)
+
         elif state == State.INITIAL_NON_CSAM:
             await self.thread.send("Content has been temporarily shadow banned.")
             await self.set_state(State.NON_CSAM_DECIDE_ACTION)
+
         elif state == State.REPORT_COMPLETE:
             await self.thread_parent_message.clear_reaction(IN_PROGRESS_EMOJI)
             await self.thread_parent_message.add_reaction(COMPLETED_EMOJI)
-            await self.thread.send("Report complete. Archiving thread.")
+            await self.thread.send("Review complete. Archiving thread.")
             await self.thread.edit(archived=True, locked=True)
+
         elif state == State.HASH_MATCH:
             await self.thread.send("Checking for match with known CSAM hashes...")
-            await asyncio.sleep(2)
+            # Randomly choose a match or no match for now
             if random.randint(0, 1) == 0:
                 await self.thread.send("Match found.")
                 await self.set_state(State.CSAM_CONFIRMED)
             else:
                 await self.thread.send("No match found. Manual review required.")
                 await self.set_state(State.IS_CSAM)
+
         elif state == State.CSAM_CONFIRMED:
-            	await self.thread.send("Removing post permanently and placing account under monitoring.")
-            	await self.thread.sent("Running AI-generation detectors...")
-            	await asyncio.sleep(5)
-            	await self.thread.sent(f"Text is AI-generated   -   Confidence: {round(random.uniform(0.3, 1.0), 2)}.")
-	    	await self.thread.sent(f"Image/video is AI-generated   -   Confidence: {round(random.uniform(0.3, 1.0), 2)}.")
-	    	await self.thread.sent("Human CSAM team investigating...")
-	    	await asyncio.sleep(5)
-            	options = ["strong", "medium", "weak"]
-            	await self.thread.sent(f"Human CSAM team finds {random.choice(options)} behavioral signals of AI.")
-		await self.thread.sent(f"Human CSAM team finds {random.choice(options)} forensics/metadata signals of AI.")
-	        await self.thread.sent("Human CSAM team will share detailed investigation report.")
-            	await self.set_state(State.IS_AI_CSAM)
+            # Real classifier to be implemented for Milestone 3
+            await self.thread.send("Removing post permanently and placing account under monitoring.")
+            await self.thread.send("Running AI-generation detectors to help your decision...")
+            await self.thread.send(f"Results: {random.random():.2f}% likely to be AI-generated.")
+            await self.set_state(State.IS_AI_CSAM)
         else:
             raise ValueError(f"Invalid state: {state}")
 
@@ -165,16 +160,17 @@ class ModReport:
 
         if self.state == State.IS_AI_CSAM:
             if picked == "yes":
-                await self.thread.send("Creating CyberTipline report and indicating that the content is likely AI-generated.")
+                await self.thread.send("⚠️ Please report to NCMEC and indicate that the content is likely AI-generated.")
                 await self.set_state(State.REPORT_COMPLETE)
             elif picked == "no":
-                await self.thread.send("Hashing CSAM content and adding it to internal database. Reporting user to NCMEC and including the hash.")
+                await self.thread.send("Hashing CSAM content and adding it to internal database.")
+                await self.thread.send("⚠️ Please report to NCMEC and include the hash.")
                 await self.set_state(State.REPORT_COMPLETE)
 
         elif self.state == State.IS_CSAM:
             if picked == "yes":
                 await self.thread.send("Reported for CSAM.")
-                await self.set_state(State.IS_AI_CSAM)
+                await self.set_state(State.CSAM_CONFIRMED)
             elif picked == "no":
                 await self.thread.send("Restoring temporarily removed content.")
                 await self.thread.send("Reporting user will be automatically warned/banned if systematically sending false reports.")
@@ -187,8 +183,8 @@ class ModReport:
             elif picked == "remove_and_warn_user":
                 await self.thread.send("Removing post and warning user.")
                 await self.set_state(State.LAW_ENFORCEMENT_OR_NO)
-            elif picked == "shadow_block_post":
-                await self.thread.send("Permanently shadow blocking post.")
+            elif picked == "shadow_block_post_and_warn_user":
+                await self.thread.send("Permanently shadow blocking post and warning user.")
                 await self.set_state(State.REPORT_COMPLETE)
             elif picked == "restore_with_note":
                 await self.thread.send("Restoring post with a pinned community note.")

@@ -81,7 +81,7 @@ class ModBot(discord.Client):
             if message.author.id == self.user.id:
                 return
             # TODO: Automatic scanning of messages
-            
+
     async def on_raw_reaction_add(self, payload):
         if payload.user_id == self.user.id:
             return
@@ -99,16 +99,17 @@ class ModBot(discord.Client):
                 await message.clear_reaction(payload.emoji.name)
 
                 # Get user from cache if available, otherwise fetch from API
-                user = self.get_user(payload.user_id)
-                if not user:
-                    user = await self.fetch_user(payload.user_id)
+                reporting_user = self.get_user(payload.user_id)
+                if not reporting_user:
+                    reporting_user = await self.fetch_user(payload.user_id)
 
                 report = Report(self)
                 report.message = message
-                self.reports[user.id] = report
+                report.reporter = reporting_user
+                self.reports[reporting_user.id] = report
 
                 try:
-                    await user.send(
+                    await reporting_user.send(
                         content=
                         f"You reacted with ❗ to report the following [message]({message.jump_url}) by *{message.author.name}*:\n"
                         f"```{message.content}```\n"
@@ -116,9 +117,9 @@ class ModBot(discord.Client):
                         embeds=message.embeds or None,
                         files=[await atch.to_file() for atch in message.attachments],
                     )
-                    await user.send(view=ReasonDropdownView(report))
+                    await reporting_user.send(view=ReasonDropdownView(report))
                 except discord.Forbidden:
-                    print(f"[Error] Cannot DM user {user.name}. They likely have DMs disabled.")
+                    print(f"[Error] Cannot DM user {reporting_user.name}. They likely have DMs disabled.")
 
 client = ModBot()
 client.run(discord_token)
