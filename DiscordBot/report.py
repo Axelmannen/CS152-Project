@@ -61,6 +61,8 @@ class FollowUpButton(Button):
             )
 
         self.report.flag = self.flag
+        if self.report.flag == "CSAM-related":
+            self.report.priority = 2
         self.report.state = State.REPORT_COMPLETE
         await self.report.log_to_mods(interaction.user)
         self.report.cleanup(interaction.user.id)
@@ -98,6 +100,7 @@ class SubreasonDropdown(Select):
                 )
                 self.report.flag = "Mental Health"
                 self.report.state = State.REPORT_COMPLETE
+                self.report.priority = 2
                 await self.report.log_to_mods(interaction.user)
                 self.report.cleanup(interaction.user.id)
                 return
@@ -164,7 +167,6 @@ class ReasonDropdown(Select):
 
     async def callback(self, interaction: discord.Interaction):
         selected = self.report.REPORT_REASONS[self.values[0]]
-
         self.placeholder = selected
         self.disabled = True  # Lock the dropdown
         
@@ -234,7 +236,7 @@ class Report:
         "2": ["Hate speech", "Terrorism or organised crime", "Calling for violence", "Showing violence, death or severe injury", "Bullying"],
         "3": ["Suicide or self-injury", "Eating disorder"],
         "4": ["Drugs", "Weapons", "Animals"],
-        "5": ["Threatening to share or sharing nude images", "Prostitution", "Sexual exploitation", "Nudity or sexual activity"]
+        "5": ["Threatening to share or sharing nude images", "Prostitution", "Sexual exploitation", "Other nudity or sexual activity"]
     }
 
     def __init__(self, client):
@@ -247,6 +249,8 @@ class Report:
         self.followup_response = None
         self.followups = []
         self.flag = None
+        # 1 = normal, 2 = high
+        self.priority = 1
 
     def report_complete(self):
         return self.state == State.REPORT_COMPLETE

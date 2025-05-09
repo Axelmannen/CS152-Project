@@ -3,7 +3,8 @@ import discord
 from discord.ui import View, Select
 import random
 
-IN_PROGRESS_EMOJI = "🟨"
+NORMAL_PRIORITY_EMOJI = "🟨"
+HIGH_PRIORITY_EMOJI = "🟥"
 COMPLETED_EMOJI = "✅"
 
 class State(Enum):
@@ -92,7 +93,10 @@ class ModReport:
         return mod_report
 
     async def start_report(self):
-        await self.thread_parent_message.add_reaction(IN_PROGRESS_EMOJI)
+        if self.report.priority == 2:
+            await self.thread_parent_message.add_reaction(HIGH_PRIORITY_EMOJI)
+        else:
+            await self.thread_parent_message.add_reaction(NORMAL_PRIORITY_EMOJI)
         if self.report.flag == "CSAM-related":
             await self.set_state(State.INITIAL_CSAM)
         else:
@@ -130,7 +134,8 @@ class ModReport:
             await self.set_state(State.NON_CSAM_DECIDE_ACTION)
 
         elif state == State.REPORT_COMPLETE:
-            await self.thread_parent_message.clear_reaction(IN_PROGRESS_EMOJI)
+            await self.thread_parent_message.clear_reaction(HIGH_PRIORITY_EMOJI)
+            await self.thread_parent_message.clear_reaction(NORMAL_PRIORITY_EMOJI)
             await self.thread_parent_message.add_reaction(COMPLETED_EMOJI)
             await self.thread.send("Review complete. Archiving thread.")
             await self.thread.edit(archived=True, locked=True)
