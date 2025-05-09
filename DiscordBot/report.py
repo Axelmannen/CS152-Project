@@ -45,8 +45,8 @@ class FollowUpButton(Button):
         self.report.flag = self.flag
         self.report.state = State.REPORT_COMPLETE
         await interaction.response.send_message(
-            f"✅ Thank you for reporting: **{reason} → {sub}**. Our internal team will decide on the appropriate action," + 
-            "including notifying law enforcement if necessary. "
+            "✅ Thank you for reporting. Our internal team will decide on the appropriate action," + 
+            "including notifying law enforcement if necessary."
         )
         await self.report.log_to_mods(interaction.user)
         self.report.cleanup(interaction.user.id)

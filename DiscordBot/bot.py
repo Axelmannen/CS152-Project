@@ -81,7 +81,7 @@ class ModBot(discord.Client):
             if message.author.id == self.user.id:
                 return
             # TODO: Automatic scanning of messages
-
+            
     async def on_raw_reaction_add(self, payload):
         if payload.user_id == self.user.id:
             return
