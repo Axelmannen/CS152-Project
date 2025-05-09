@@ -144,18 +144,18 @@ class ModReport:
                 await self.thread.send("No match found. Manual review required.")
                 await self.set_state(State.IS_CSAM)
         elif state == State.CSAM_CONFIRMED:
-            await self.thread.send("Removing post permanently and placing account under monitoring.")
-            await self.thread.sent("Running AI-generation detectors...")
-            await asyncio.sleep(5)
-            await self.thread.sent(f"Text is AI-generated   -   Confidence: {round(random.uniform(0.3, 1.0), 2)}.")
-	        await self.thread.sent(f"Image/video is AI-generated   -   Confidence: {round(random.uniform(0.3, 1.0), 2)}.")
-	        await self.thread.sent("Human CSAM team investigating...")
-	        await asyncio.sleep(5)
-            options = ["strong", "medium", "weak"]
-            await self.thread.sent(f"Human CSAM team finds {random.choice(options)} behavioral signals of AI.")
-	        await self.thread.sent(f"Human CSAM team finds {random.choice(options)} forensics/metadata signals of AI.")
+            	await self.thread.send("Removing post permanently and placing account under monitoring.")
+            	await self.thread.sent("Running AI-generation detectors...")
+            	await asyncio.sleep(5)
+            	await self.thread.sent(f"Text is AI-generated   -   Confidence: {round(random.uniform(0.3, 1.0), 2)}.")
+	    	await self.thread.sent(f"Image/video is AI-generated   -   Confidence: {round(random.uniform(0.3, 1.0), 2)}.")
+	    	await self.thread.sent("Human CSAM team investigating...")
+	    	await asyncio.sleep(5)
+            	options = ["strong", "medium", "weak"]
+            	await self.thread.sent(f"Human CSAM team finds {random.choice(options)} behavioral signals of AI.")
+		await self.thread.sent(f"Human CSAM team finds {random.choice(options)} forensics/metadata signals of AI.")
 	        await self.thread.sent("Human CSAM team will share detailed investigation report.")
-            await self.set_state(State.IS_AI_CSAM)
+            	await self.set_state(State.IS_AI_CSAM)
         else:
             raise ValueError(f"Invalid state: {state}")
 
