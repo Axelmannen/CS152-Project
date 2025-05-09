@@ -13,7 +13,7 @@ class State(Enum):
 
 class FollowUpView(View):
     def __init__(self, report, question, options):
-        super().__init__(timeout=60)
+        super().__init__(timeout=None)
         self.report = report
         for label, flag in options:
             self.add_item(FollowUpButton(button_label=label, log_value=f"{question}: {label}", flag=flag, report=report))
@@ -42,12 +42,26 @@ class FollowUpButton(Button):
             )
             return
 
+        if self.flag == "Block":
+            reported_user = self.report.message.author.name if self.report.message else "The user"
+            # block confirmation
+            await interaction.response.send_message(f"{reported_user} has been blocked.")
+
+            # report confirmation (must use followup)
+            await interaction.followup.send(
+                f"✅ Thank you for reporting: **{self.report.REPORT_REASONS[self.report.reason_key]} → {self.report.subreason}**.\n"
+                "Our internal team will decide on the appropriate action, including notifying law enforcement if necessary."
+            )
+
+        else:
+            # if not a block path, this is the first and only message
+            await interaction.response.send_message(
+                f"✅ Thank you for reporting: **{self.report.REPORT_REASONS[self.report.reason_key]} → {self.report.subreason}**.\n"
+                "Our internal team will decide on the appropriate action, including notifying law enforcement if necessary."
+            )
+
         self.report.flag = self.flag
         self.report.state = State.REPORT_COMPLETE
-        await interaction.response.send_message(
-            f"✅ Thank you for reporting: **{reason} → {sub}**. Our internal team will decide on the appropriate action," + 
-            "including notifying law enforcement if necessary. "
-        )
         await self.report.log_to_mods(interaction.user)
         self.report.cleanup(interaction.user.id)
 
@@ -137,7 +151,7 @@ class SubreasonDropdown(Select):
 
 class SubreasonDropdownView(View):
     def __init__(self, report):
-        super().__init__(timeout=60)
+        super().__init__(timeout=None)
         self.add_item(SubreasonDropdown(report))
         self.add_item(GoBackToReasonButton(report))
         self.add_item(CancelButton(report))
@@ -156,6 +170,18 @@ class ReasonDropdown(Select):
         
         await interaction.message.edit(view=self.view) # update to reflect lock
         self.report.reason_key = self.values[0]
+
+        if selected == "False information":
+            self.report.subreason = "-"
+            self.report.state = State.REPORT_COMPLETE
+            await interaction.response.send_message(
+                f"✅ Thank you for reporting: **{selected}**. Our internal team will decide on the appropriate " +
+                "action, including notifying law enforcement if necessary."
+            )
+            await self.report.log_to_mods(interaction.user)
+            self.report.cleanup(interaction.user.id)
+            return
+    
         self.report.state = State.AWAITING_SUBREASON
         await interaction.response.send_message(
             f"✅ You selected: **{self.report.REPORT_REASONS[self.report.reason_key]}**\n"
@@ -165,7 +191,7 @@ class ReasonDropdown(Select):
 
 class ReasonDropdownView(View):
     def __init__(self, report):
-        super().__init__(timeout=60)
+        super().__init__(timeout=None)
         self.add_item(ReasonDropdown(report))
         self.add_item(CancelButton(report))
 
@@ -208,8 +234,7 @@ class Report:
         "2": ["Hate speech", "Terrorism or organised crime", "Calling for violence", "Showing violence, death or severe injury", "Bullying"],
         "3": ["Suicide or self-injury", "Eating disorder"],
         "4": ["Drugs", "Weapons", "Animals"],
-        "5": ["Threatening to share or sharing nude images", "Prostitution", "Sexual exploitation", "Nudity or sexual activity"],
-        "6": ["Misinformation", "Misleading content"]
+        "5": ["Threatening to share or sharing nude images", "Prostitution", "Sexual exploitation", "Nudity or sexual activity"]
     }
 
     def __init__(self, client):
