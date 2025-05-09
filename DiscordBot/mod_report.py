@@ -132,7 +132,7 @@ class ModReport:
             await asyncio.sleep(2)
             if random.randint(0, 1) == 0:
                 await self.thread.send("Match found.")
-                await self.set_state(State.IS_AI_CSAM)
+                await self.set_state(State.CSAM_CONFIRMED)
             else:
                 await self.thread.send("No match found. Manual review required.")
                 await self.set_state(State.IS_CSAM)
@@ -154,7 +154,7 @@ class ModReport:
                 await self.thread.send("Creating CyberTipline report and indicating that the content is likely AI-generated.")
                 await self.set_state(State.REPORT_COMPLETE)
             elif picked == "no":
-                await self.thread.send("Hasing CSAM content and adding it to internal database. Reporting user to NCMEC and including the hash.")
+                await self.thread.send("Hashing CSAM content and adding it to internal database. Reporting user to NCMEC and including the hash.")
                 await self.set_state(State.REPORT_COMPLETE)
 
         elif self.state == State.IS_CSAM:
