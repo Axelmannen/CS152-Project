@@ -31,12 +31,12 @@ INTERACTIVE_STATES = {
     State.IS_CSAM: {
         "prompt": """Does this content qualify as CSAM?
 
-			Note: CSAM content involves individuals under 18 years old, and includes any of: 
-			- Sexual intercourse
-			- Bestiality
-			- Masturbaation
-			- Sadistic or masochistic abuse
-			- Lascivious exhibition of the anus, genitals, or pubic area of any person (if unsure, apply Dost Test)""",
+Note: CSAM content involves individuals under 18 years old, and includes any of: 
+- Sexual intercourse
+- Bestiality
+- Masturbaation
+- Sadistic or masochistic abuse
+- Lascivious exhibition of the anus, genitals, or pubic area of any person (if unsure, apply Dost Test)""",
         "options": [
             discord.SelectOption(label="Yes", value="yes"),
             discord.SelectOption(label="No", value="no"),
@@ -85,7 +85,7 @@ class ModReport:
                 f"**Link**: {report.message.jump_url}\n"
                 f"**Message**: ```{report.message.content}```\n",
             embeds=report.message.embeds or None,
-            files=[atch.to_file() for atch in report.message.attachments]
+            files=[await atch.to_file() for atch in report.message.attachments]
         )
         thread = await parent_message.create_thread(name=f"Review of {report.message.author.name}'s message")
         mod_report = cls(thread, parent_message, report, report.message.author.id, bot_user_id)
@@ -118,7 +118,7 @@ class ModReport:
             )
             select.callback = lambda interaction: self.handle_selection(interaction, select.values[0])
 
-            view = View()
+            view = View(timeout=None)
             view.add_item(select)
 
             self.latest_bot_message = await self.thread.send(prompt, view=view)
