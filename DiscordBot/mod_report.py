@@ -154,7 +154,7 @@ class ModReport:
             # Real classifier to be implemented for Milestone 3
             await self.thread.send("Removing post permanently and placing account under monitoring.")
             await self.thread.send("Running AI-generation detectors to help your decision...")
-            await self.thread.send(f"Results: {random.random():.2f}% likely to be AI-generated.")
+            await self.thread.send(f"Results: {random.random() * 100:.2f}% likely to be AI-generated.")
             await self.set_state(State.IS_AI_CSAM)
         else:
             raise ValueError(f"Invalid state: {state}")
