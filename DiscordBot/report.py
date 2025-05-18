@@ -11,15 +11,7 @@ class State(Enum):
     AWAITING_SUBREASON = auto()
     AWAITING_FOLLOWUP = auto()
     REPORT_COMPLETE = auto()
-
-
-class ContentFlags(Enum):
-    REPORT_START = auto()
-    AWAITING_MESSAGE = auto()
-    AWAITING_REASON = auto()
-    AWAITING_SUBREASON = auto()
-    AWAITING_FOLLOWUP = auto()
-    REPORT_COMPLETE = auto()
+    REPORT_CANCELLED = auto()
 
 
 #######################################################
@@ -55,16 +47,16 @@ class ReasonDropdown(Select):
                 f"✅ Thank you for reporting: **{selected}**. Our internal team will decide on the appropriate "
                 + "action, including notifying law enforcement if necessary."
             )
-            await self.report.log_to_mods()
+            await self.report.send_to_mods()
             self.report.cleanup(interaction.user.id)
-            return
 
-        self.report.state = State.AWAITING_SUBREASON
-        await interaction.response.send_message(
-            f"You selected: **{self.report.REPORT_REASONS[self.report.reason_key]}**\n"
-            "Please select a subreason (or click 'Go Back'):",
-            view=SubreasonDropdownView(self.report),
-        )
+        else:
+            self.report.state = State.AWAITING_SUBREASON
+            await interaction.response.send_message(
+                f"You selected: **{self.report.REPORT_REASONS[self.report.reason_key]}**\n"
+                "Please select a subreason (or click 'Go Back'):",
+                view=SubreasonDropdownView(self.report),
+            )
 
 
 class CancelButton(Button):
@@ -73,7 +65,7 @@ class CancelButton(Button):
         self.report = report
 
     async def callback(self, interaction: discord.Interaction):
-        self.report.state = State.REPORT_COMPLETE
+        self.report.state = State.REPORT_CANCELLED
         await interaction.response.send_message("❌ Report cancelled.")
         self.report.cleanup(interaction.user.id)
 
@@ -113,6 +105,7 @@ class SubreasonDropdown(Select):
 
         # suicide, self-injury, or eating disorders flow
         if reason == "Suicide, self-injury, or eating disorders":
+
             if sub == "Suicide or self-injury":
                 await interaction.response.send_message(
                     "If you or someone you know needs help, call the Suicide and Crisis Lifeline at 988.\n\n"
@@ -122,12 +115,10 @@ class SubreasonDropdown(Select):
                     "**[Suicide & Crisis Lifeline](https://988lifeline.org)**\n"
                     "**[Mental Health Resources - NAMI](https://www.nami.org/support-education/nami-helpline/)**"
                 )
-                self.report.flag = "Mental Health"
                 self.report.state = State.REPORT_COMPLETE
                 self.report.priority = 2
-                await self.report.log_to_mods()
+                await self.report.send_to_mods()
                 self.report.cleanup(interaction.user.id)
-                return
 
             elif sub == "Eating disorder":
                 await interaction.response.send_message(
@@ -137,38 +128,33 @@ class SubreasonDropdown(Select):
                     "**[Suicide & Crisis Lifeline](https://988lifeline.org)**\n"
                     "**[Mental Health Resources - NAMI](https://www.nami.org/Support-Education/NAMI-HelpLine/Top-HelpLine-Resources)**"
                 )
-                self.report.flag = "Mental Health"
                 self.report.state = State.REPORT_COMPLETE
-                await self.report.log_to_mods()
+                await self.report.send_to_mods()
                 self.report.cleanup(interaction.user.id)
-                return
 
         # bullying, hate or harassment flow
-        if reason == "Bullying, hate or harassment" and sub == "Bullying":
+        elif reason == "Bullying, hate or harassment" and sub == "Bullying":
             await interaction.response.send_message(
                 "Who is this bullying targeted toward?",
-                view=FollowUpView(
-                    self.report, "Target of bullying", [("Myself", "Self-targeted"), ("Someone else", "3rd-party")]
-                ),
+                view=FollowUpView(self.report, "Target of bullying", ["Myself", "Someone else"]),
             )
-            return
 
         # nudity or sexual activity flow
-        if reason == "Nudity or sexual activity":
+        elif reason == "Nudity or sexual activity":
             await interaction.response.send_message(
-                "Does this involve someone under 18?",
-                view=FollowUpView(self.report, "CSAM Check", [("Yes", "CSAM-related"), ("No", "Adult content")]),
+                "Does the content appear involve someone under 18?",
+                view=FollowUpView(self.report, "Suspected CSAM", ["Yes", "No"]),
             )
-            return
 
-        # default flow
-        self.report.state = State.REPORT_COMPLETE
-        await interaction.response.send_message(
-            f"✅ Thank you for reporting: **{reason} → {sub}**. Our internal team will decide on the appropriate action,"
-            + " including notifying law enforcement if necessary. "
-        )
-        await self.report.log_to_mods()
-        self.report.cleanup(interaction.user.id)
+        else:
+            # default flow
+            self.report.state = State.REPORT_COMPLETE
+            await interaction.response.send_message(
+                f"✅ Thank you for reporting: **{reason} → {sub}**. Our internal team will decide on the appropriate action,"
+                + " including notifying law enforcement if necessary. "
+            )
+            await self.report.send_to_mods()
+            self.report.cleanup(interaction.user.id)
 
 
 class GoBackToReasonButton(Button):
@@ -186,40 +172,35 @@ class GoBackToReasonButton(Button):
 
 
 #######################################################
-# SUBSUBREASON / THIRD PROMPT
+# FOLLOWUPS / THIRD PROMPTS AND BEYOND
+# FOR ASKING QUESTIONS THAT ARE ANSWERED WITH BUTTONS
 #######################################################
 
 
 class FollowUpView(View):
-    def __init__(self, report, question, options):
+    def __init__(self, report, question_summary, options):
         super().__init__(timeout=None)
-        self.report = report
-        for label, flag in options:
-            self.add_item(
-                FollowUpButton(button_label=label, log_value=f"{question}: {label}", flag=flag, report=report)
-            )
+        for label in options:
+            self.add_item(FollowUpButton(report, question_summary, label))
         self.add_item(CancelButton(report))
 
 
 class FollowUpButton(Button):
-    def __init__(self, button_label, log_value, flag, report):
+    def __init__(self, report, question_summary, button_label):
         super().__init__(label=button_label, style=discord.ButtonStyle.primary)
-        self.log_value = log_value  # What appears in mod report
-        self.flag = flag
+        self.question_summary = question_summary
         self.report = report
 
     async def callback(self, interaction: discord.Interaction):
-        self.report.followups.append(self.log_value)
+        self.report.followups.append(f"{self.question_summary}: {self.label}")
 
-        # determine next step based on current stage
-        if self.flag in ["Self-targeted", "3rd-party"]:
+        if self.question_summary == "Target of bullying":
             await interaction.response.send_message(
                 "Would you like to block this user? Blocking this user will prevent them from interacting with you on this platform in the future.",
-                view=FollowUpView(self.report, "Block User", [("Yes", "Block"), ("No", "NoBlock")]),
+                view=FollowUpView(self.report, "Block User", ["Yes", "No"]),
             )
-            return
 
-        if self.flag == "Block":
+        elif self.question_summary == "Block User":
             reported_user = self.report.message.author.name if self.report.message else "The user"
             # block confirmation
             await interaction.response.send_message(f"{reported_user} has been blocked.")
@@ -230,19 +211,27 @@ class FollowUpButton(Button):
                 "Our internal team will decide on the appropriate action, including notifying law enforcement if necessary."
             )
 
-        else:
+            self.report.state = State.REPORT_COMPLETE
+            await self.report.send_to_mods()
+            self.report.cleanup(interaction.user.id)
+
+        elif self.question_summary == "Suspected CSAM":
             # if not a block path, this is the first and only message
             await interaction.response.send_message(
                 f"✅ Thank you for reporting: **{self.report.REPORT_REASONS[self.report.reason_key]} → {self.report.subreason}**.\n"
                 "Our internal team will decide on the appropriate action, including notifying law enforcement if necessary."
             )
 
-        self.report.flag = self.flag
-        if self.report.flag == "CSAM-related":
-            self.report.priority = 2
-        self.report.state = State.REPORT_COMPLETE
-        await self.report.log_to_mods()
-        self.report.cleanup(interaction.user.id)
+            if self.label == "Yes":
+                self.report.csam_related = True
+                self.report.priority = 2
+
+            self.report.state = State.REPORT_COMPLETE
+            await self.report.send_to_mods()
+            self.report.cleanup(interaction.user.id)
+
+        else:
+            raise ValueError("Invalid followup question")
 
 
 #######################################################
@@ -287,9 +276,8 @@ class Report:
         self.reporter = None
         self.reason_key = None
         self.subreason = None
-        self.followup_response = None
         self.followups = []
-        self.flag = None
+        self.csam_related = False
         self.priority = 1  # 1 = normal, 2 = high
 
     def report_complete(self):
@@ -299,7 +287,7 @@ class Report:
         if hasattr(self.client, "reports") and user_id in self.client.reports:
             self.client.reports.pop(user_id)
 
-    async def log_to_mods(self):
+    async def send_to_mods(self):
         for mod_channel in self.client.mod_channels.values():
             mod_report = await ModReport.create(mod_channel, self, self.client.user.id)
             self.client.mod_reports[mod_report.thread.id] = mod_report

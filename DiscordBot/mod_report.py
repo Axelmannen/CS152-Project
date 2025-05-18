@@ -80,7 +80,6 @@ class ModReport:
                 f"**Reporter**: {report.reporter}\n"
                 f"**Reason**: {report.REPORT_REASONS[report.reason_key]} → {report.subreason}\n"
                 f"**Details**: {', '.join(report.followups) if report.followups else '-'}\n"
-                f"**Flag**: {report.flag or 'None'}\n"
                 f"**Reported User**: {report.message.author.name}\n"
                 f"**Link**: {report.message.jump_url}\n"
                 f"**Message**: ```{report.message.content}```\n",
@@ -97,7 +96,7 @@ class ModReport:
             await self.thread_parent_message.add_reaction(HIGH_PRIORITY_EMOJI)
         else:
             await self.thread_parent_message.add_reaction(NORMAL_PRIORITY_EMOJI)
-        if self.report.flag == "CSAM-related":
+        if self.report.csam_related:
             await self.set_state(State.INITIAL_CSAM)
         else:
             await self.set_state(State.INITIAL_NON_CSAM)
