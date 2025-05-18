@@ -15,7 +15,7 @@ REASON_MAP = {
     "3": "Suicide or Self-Injury",
     "4": "Selling Restricted Items",
     "5": "Nudity or Sexual Activity",
-    "6": "False Information"
+    "6": "False Information",
 }
 
 # Set up logging to the console
@@ -110,8 +110,7 @@ class ModBot(discord.Client):
 
                 try:
                     await reporting_user.send(
-                        content=
-                        f"You reacted with ❗ to report the following [message]({message.jump_url}) by *{message.author.name}*:\n"
+                        content=f"You reacted with ❗ to report the following [message]({message.jump_url}) by *{message.author.name}*:\n"
                         f"```{message.content}```\n"
                         "Please select the reason for reporting this message:",
                         embeds=message.embeds or None,
@@ -120,6 +119,7 @@ class ModBot(discord.Client):
                     await reporting_user.send(view=ReasonDropdownView(report))
                 except discord.Forbidden:
                     print(f"[Error] Cannot DM user {reporting_user.name}. They likely have DMs disabled.")
+
 
 client = ModBot()
 client.run(discord_token)
