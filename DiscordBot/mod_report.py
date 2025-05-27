@@ -71,6 +71,7 @@ class ModReport:
         self.state = None
         self.latest_bot_message = None
         self.report = report
+        self.original_message = report.message
 
     @classmethod
     async def create(cls, channel, report, bot_user_id):
@@ -159,6 +160,17 @@ class ModReport:
             raise ValueError(f"Invalid state: {state}")
 
 
+    async def delete_reported_message(self):
+        try:
+            await self.original_message.delete()
+            await self.thread.send("✅ Original message has been deleted.")
+        except discord.errors.NotFound:
+            await self.thread.send("⚠️ Message already deleted or not found.")
+        except discord.errors.Forbidden:
+            await self.thread.send("⚠️ Bot lacks permission to delete the message.")
+        except Exception as e:
+            await self.thread.send(f"⚠️ Error deleting message: {str(e)}")
+
     async def handle_selection(self, interaction: discord.Interaction, picked: str):
         await interaction.response.defer()  # defer the response to prevent timeout
 
@@ -173,6 +185,7 @@ class ModReport:
 
         elif self.state == State.IS_CSAM:
             if picked == "yes":
+                await self.delete_reported_message()
                 await self.thread.send("Reported for CSAM.")
                 await self.set_state(State.CSAM_CONFIRMED)
             elif picked == "no":
@@ -182,12 +195,17 @@ class ModReport:
 
         elif self.state == State.NON_CSAM_DECIDE_ACTION:
             if picked == "remove_and_delete_user":
+                await self.delete_reported_message()
                 await self.thread.send("Removing post and user account.")
                 await self.set_state(State.LAW_ENFORCEMENT_OR_NO)
+            
             elif picked == "remove_and_warn_user":
+                await self.delete_reported_message()
                 await self.thread.send("Removing post and warning user.")
                 await self.set_state(State.LAW_ENFORCEMENT_OR_NO)
+            
             elif picked == "shadow_block_post_and_warn_user":
+                await self.delete_reported_message()
                 await self.thread.send("Permanently shadow blocking post and warning user.")
                 await self.set_state(State.REPORT_COMPLETE)
             elif picked == "restore_with_note":
