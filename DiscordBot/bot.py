@@ -117,10 +117,6 @@ class ModBot(discord.Client):
             # if violation detected, send to mods
             if report:
                 await report.send_to_mods()
-                await message.channel.send(
-                    f"⚠️ This message from {message.author.mention} has been flagged for review.",
-                    reference=message
-                )
 
     async def on_raw_reaction_add(self, payload):
         if payload.user_id == self.user.id:
