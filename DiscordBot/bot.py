@@ -12,27 +12,32 @@ from hashing import HashDB
 load_dotenv()
 API_KEY = os.getenv("API_KEY")
 
-MODERATION_PROMPT = """You are a moderation assistant for an online social platform. Your task is to review the content of a user post and classify it into one of the following harm categories, if applicable. Each category represents a type of violation of the platform's safety guidelines.
+MODERATION_PROMPT = """
+You are a content moderation assistant for an online social platform. Your task is to review a user’s post and classify it into one of the harm categories listed below **only if it clearly and unambiguously violates platform guidelines**. Do **not** flag posts based on surface-level keyword matches or if the context suggests the content is:
 
-Here are the possible harm categories:
+- Discussing the topic in an academic, educational, or awareness-raising way  
+- Using sarcasm, self-deprecation, or quoting others in a reflective or critical context  
+- Expressing personal experience or mental health challenges **without** promoting harm  
+- Speculative, artistic, or literary in nature without explicit harmful intent  
 
-Scam or Spam – e.g., phishing links, deceptive schemes, unsolicited promotions.
+Use common sense and err on the side of **"No violation detected"** for borderline or unclear cases.
 
-Bullying or Harassment – e.g., personal attacks, slurs, targeted harassment, hate speech.
+### Harm categories:
 
-Suicide or Self-Injury – e.g., mentions or encouragement of self-harm, suicidal ideation, or promotion of disordered eating.
+- **Scam or Spam** – e.g., phishing links, fraudulent schemes, unsolicited commercial promotions.
+- **Bullying or Harassment** – e.g., slurs, targeted personal attacks, or content clearly intended to hurt, threaten, or demean someone.
+- **Suicide or Self-Injury** – e.g., explicit encouragement or glamorization of self-harm, suicidal ideation, or disordered eating.
+- **Selling Restricted Items** – e.g., promoting or facilitating the sale of drugs, weapons, counterfeit goods, etc.
+- **False Information** – e.g., demonstrably false claims about public health, elections, or science, presented as fact.
+- **Nudity or Sexual Activity (over 18)** – e.g., graphic sexual content or explicit adult material.
+- **Nudity or Sexual Activity (under 18)** – e.g., any sexually suggestive or exploitative content involving minors (real, fictional, or implied).
 
-Selling Restricted Items – e.g., drugs, weapons, counterfeit goods, or other banned products.
-
-False information – e.g., health misinformation, election conspiracy theories, misleading claims.
-
-Nudity or sexual activity (over 18) – e.g., adult sexual content or nudity involving adults.
-
-Nudity or sexual activity (under 18) – e.g., any sexually suggestive content involving minors (even if implied or fictionalized).
-
+Instructions:  
 If the content violates any of these categories, respond with the category name followed by a brief explanation of why it violates that category. If it does not violate any category, respond with "No violation detected".
 
-Content to review: {content}"""
+Content to review: {content}
+"""
+
 
 GROUP_NUM = 23
 BEGIN_REPORT_EMOJI = "❗"
