@@ -8,6 +8,11 @@ from google import genai
 from typing import Optional
 from dotenv import load_dotenv
 from hashing import HashDB
+from io import BytesIO
+from pathlib import Path
+import asyncio
+import tempfile
+import mimetypes
 
 load_dotenv()
 API_KEY = os.getenv("API_KEY")
@@ -217,27 +222,58 @@ class ModBot(discord.Client):
                         user = await self.fetch_user(payload.user_id)
                     await message.remove_reaction(IN_PROGRESS_EMOJI, user)
                 break
-
+    
     async def get_ai_classification(self, message: discord.Message) -> Optional[str]:
-        try:
-            content = f"{message.content}\n"
-            if message.attachments:
-                content += "Attachments: " + ", ".join([a.filename for a in message.attachments])
-                
-            # get Gemini response
-            response = self.client.models.generate_content(
-                model='gemini-2.0-flash', 
-                contents=[MODERATION_PROMPT.format(content=content)]
+        text_content = message.content.strip()
+        parts: list[object] = []
+
+        for atch in message.attachments:
+            # 1) detect if this is an image
+            mime = (
+                atch.content_type
+                or mimetypes.guess_type(atch.filename)[0]
+                or ""
             )
 
-            print(response.text)
-            
-            classification = response.text.strip()
-            return classification if classification != "No violation detected" else None
-            
-        except Exception as e:
-            logger.error(f"Error getting AI classification: {e}")
-            return None
+            if mime.startswith("image/"):
+                # 2) read into memory
+                data = await atch.read()
+                # 3) dump to a real temp file with the right extension
+                suffix = Path(atch.filename).suffix or ""
+                with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                    tmp.write(data)
+                    tmp.flush()
+                    tmp_path = tmp.name
+
+                try:
+                    # 4) upload the temp file path—SDK will infer mime from .suffix
+                    uploaded = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: self.client.files.upload(file=tmp_path)
+                    )
+                finally:
+                    # 5) clean up
+                    os.unlink(tmp_path)
+
+                parts.extend([uploaded, "\n\n"])
+            else:
+                # not an image → just note it
+                parts.append(f"Attachment filename: {atch.filename}\n\n")
+
+        # 6) add your moderation prompt
+        parts.append(MODERATION_PROMPT.format(content=text_content))
+
+        # 7) call Gemini
+        response = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: self.client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=parts
+            )
+        )
+
+        classification = response.text.strip()
+        return classification if classification != "No violation detected" else None
 
     async def auto_moderate(self, message: discord.Message) -> Optional[Report]:
         try:
@@ -275,12 +311,21 @@ class ModBot(discord.Client):
                         report.reason_key = key
                         break
                 
-                # fallback to false information
+                # fallback to no violation detected
                 if not report.reason_key:
-                    report.reason_key = "6"
+                    logger.info("No violation detected by AI. No moderation report generated.")
+                    return None
                     
                 report.subreason = "Auto-detected by AI"
                 report.ai_classification = classification
+
+                # mark as suspected CSAM to direct to the CSAM flow
+                if report.reason_key == "5" and "under 18" in classification_lower:
+                    print("Detected suspected CSAM content.")
+                    report.is_suspected_csam = True
+                    report.priority == 2
+                    report.csam_related = True
+                
                 return report
                 
             return None
