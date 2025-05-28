@@ -323,7 +323,7 @@ class ModBot(discord.Client):
                 if report.reason_key == "5" and "under 18" in classification_lower:
                     print("Detected suspected CSAM content.")
                     report.is_suspected_csam = True
-                    report.priority == 2
+                    report.priority = 2
                     report.csam_related = True
                 
                 return report
