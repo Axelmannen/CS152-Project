@@ -2,6 +2,7 @@ from enum import Enum, auto
 import discord
 from discord.ui import View, Select
 import random
+from hashing import HashDB, AIGeneratedOption, HashRecord, get_phash_from_discord_attachment
 
 NORMAL_PRIORITY_EMOJI = "🟨"
 HIGH_PRIORITY_EMOJI = "🟥"
@@ -15,21 +16,21 @@ class State(Enum):
 
     INITIAL_NON_CSAM = auto()
     HASH_MATCH = auto()
-    CSAM_CONFIRMED = auto()
-    IS_AI_CSAM = auto()
-    IS_CSAM = auto()
+    RUN_AI_CLASSIFIER = auto()
+    MANUAL_IS_IT_AI_CSAM = auto()
+    MANUAL_IS_IT_CSAM = auto()
 
     REPORT_COMPLETE = auto()
     
 INTERACTIVE_STATES = {
-    State.IS_AI_CSAM: {
+    State.MANUAL_IS_IT_AI_CSAM: {
         "prompt": "Is this AI-generated CSAM?",
         "options": [
             discord.SelectOption(label="Yes", value="yes"),
             discord.SelectOption(label="No", value="no"),
         ]
     },
-    State.IS_CSAM: {
+    State.MANUAL_IS_IT_CSAM: {
         "prompt": """Does this content qualify as CSAM?
 
 Note: CSAM content involves individuals under 18 years old, and includes any of: 
@@ -64,17 +65,21 @@ Note: CSAM content involves individuals under 18 years old, and includes any of:
 }
 
 class ModReport:
-    def __init__(self, thread, thread_parent_message, report, reported_user_id, bot_user_id):
+    def __init__(self, thread, thread_parent_message, report, reported_user_id, bot_user_id, hash_db):
         self.thread = thread
         self.thread_parent_message = thread_parent_message
         self.reported_user_id = reported_user_id
         self.bot_user_id = bot_user_id
         self.in_progress_by = None  # discord.User.id of the claiming moderator
         self.lock_message = None
+        self.hash_db = hash_db
         self.state = None
         self.latest_bot_message = None
         self.report = report
         self.original_message = report.message
+
+        # We only support one attachment for now
+        self.file = None if len(report.message.attachments) == 0 else report.message.attachments[0]
 
     @classmethod
     async def create(cls, channel, report, bot_user_id):
@@ -91,7 +96,7 @@ class ModReport:
             files=[await atch.to_file() for atch in report.message.attachments]
         )
         thread = await parent_message.create_thread(name=f"Review of {report.message.author.name}'s message")
-        mod_report = cls(thread, parent_message, report, report.message.author.id, bot_user_id)
+        mod_report = cls(thread, parent_message, report, report.message.author.id, bot_user_id, report.client.hash_db)
         await mod_report.start_report()
         return mod_report
 
@@ -146,20 +151,38 @@ class ModReport:
 
         elif state == State.HASH_MATCH:
             await self.thread.send("Checking for match with known CSAM hashes...")
-            # Randomly choose a match or no match for now
-            if random.randint(0, 1) == 0:
-                await self.thread.send("Match found.")
-                await self.set_state(State.CSAM_CONFIRMED)
-            else:
-                await self.thread.send("No match found. Manual review required.")
-                await self.set_state(State.IS_CSAM)
 
-        elif state == State.CSAM_CONFIRMED:
+            if self.file:
+                phash = await get_phash_from_discord_attachment(self.file)
+                record = self.hash_db.check_matching_hash(phash)
+                if record:                        
+                    if record.ai_generated == AIGeneratedOption.YES:
+                        await self.thread.send("The following image has been matched with an AI-generated CSAM hash.")
+                        await self.thread.send(self.file.url)
+                    elif record.ai_generated == AIGeneratedOption.NO:
+                        await self.thread.send("The following image has been matched with a non-AI-generated CSAM hash.")
+                        await self.thread.send(self.file.url)
+                    else:
+                        await self.thread.send("Unknown AI-generated status. Manual review required.")
+                        await self.set_state(State.MANUAL_IS_IT_AI_CSAM)
+                        return
+
+                    await self.thread.send("Removing post permanently and placing account under monitoring.")
+                    await self.delete_reported_message()
+                    await self.thread.send("⚠️ Please report to NCMEC and include the hash.")
+                    await self.set_state(State.REPORT_COMPLETE)
+                else:
+                    await self.thread.send("No match found. Manual review required.")
+                    await self.set_state(State.MANUAL_IS_IT_CSAM)
+            else:
+                await self.thread.send("No attachment found. Manual review required.")
+                await self.set_state(State.MANUAL_IS_IT_CSAM)
+
+        elif state == State.RUN_AI_CLASSIFIER:
             # Real classifier to be implemented for Milestone 3
-            await self.thread.send("Removing post permanently and placing account under monitoring.")
             await self.thread.send("Running AI-generation detectors to help your decision...")
             await self.thread.send(f"Results: {random.random() * 100:.2f}% likely to be AI-generated.")
-            await self.set_state(State.IS_AI_CSAM)
+            await self.set_state(State.MANUAL_IS_IT_AI_CSAM)
         else:
             raise ValueError(f"Invalid state: {state}")
 
@@ -175,7 +198,7 @@ class ModReport:
     async def delete_reported_message(self):
         try:
             await self.original_message.delete()
-            await self.thread.send("✅ Original message has been deleted.")
+            await self.thread.send("Original message has been deleted.")
         except discord.errors.NotFound:
             await self.thread.send("⚠️ Message already deleted or not found.")
         except discord.errors.Forbidden:
@@ -211,26 +234,32 @@ class ModReport:
         await interaction.response.defer()
 
 
-        if self.state == State.IS_AI_CSAM:
+        if self.state == State.MANUAL_IS_IT_AI_CSAM:
             if picked == "yes":
+                await self.thread.send("Hashing CSAM content and adding it to internal database.")
+                phash = await get_phash_from_discord_attachment(self.file)
+                self.hash_db.add_record(HashRecord(phash, ai_generated=AIGeneratedOption.YES))  
                 await self.thread.send("⚠️ Please report to NCMEC and indicate that the content is likely AI-generated.")
                 await self.set_state(State.REPORT_COMPLETE)
             elif picked == "no":
                 await self.thread.send("Hashing CSAM content and adding it to internal database.")
+                phash = await get_phash_from_discord_attachment(self.file)
+                self.hash_db.add_record(HashRecord(phash, ai_generated=AIGeneratedOption.NO))  
                 await self.thread.send("⚠️ Please report to NCMEC and include the hash.")
                 await self.set_state(State.REPORT_COMPLETE)
 
-        elif self.state == State.IS_CSAM:
+        elif self.state == State.MANUAL_IS_IT_CSAM:
             if picked == "yes":
                 await self.delete_reported_message()
                 await self.thread.send("Reported for CSAM.")
-                await self.set_state(State.CSAM_CONFIRMED)
+                await self.set_state(State.RUN_AI_CLASSIFIER)
             elif picked == "no":
                 await self.thread.send("Restoring temporarily removed content.")
                 await self.thread.send("Reporting user will be automatically warned/banned if systematically sending false reports.")
                 await self.set_state(State.REPORT_COMPLETE)
 
         elif self.state == State.NON_CSAM_DECIDE_ACTION:
+
             if picked == "remove_and_delete_user":
                 await self.delete_reported_message()
                 await self.thread.send("Removing post and user account.")
@@ -245,15 +274,19 @@ class ModReport:
                 await self.delete_reported_message()
                 await self.thread.send("Permanently shadow blocking post and warning user.")
                 await self.set_state(State.REPORT_COMPLETE)
+
             elif picked == "restore_with_note":
                 await self.thread.send("Restoring post with a pinned community note.")
                 await self.set_state(State.REPORT_COMPLETE)
+
             elif picked == "restore_with_warning":
                 await self.thread.send("Restoring post with a warning.")
                 await self.set_state(State.REPORT_COMPLETE)
+
             elif picked == "escalate_to_specialist_team":
                 await self.thread.send("Escalating to specialist team.")
                 await self.set_state(State.REPORT_COMPLETE)
+
             elif picked == "restore":
                 await self.thread.send("Restoring post.")
                 await self.thread.send("Reporting user will be automatically warned/banned if systematically sending false reports.")

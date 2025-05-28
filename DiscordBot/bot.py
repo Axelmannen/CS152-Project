@@ -7,6 +7,7 @@ from mod_report import ModReport, IN_PROGRESS_EMOJI
 from google import genai  
 from typing import Optional
 from dotenv import load_dotenv
+from hashing import HashDB
 
 load_dotenv()
 API_KEY = os.getenv("API_KEY")
@@ -35,6 +36,7 @@ Content to review: {content}"""
 
 GROUP_NUM = 23
 BEGIN_REPORT_EMOJI = "❗"
+
 
 # UI Reason Map
 REASON_MAP = {
@@ -74,6 +76,8 @@ class ModBot(discord.Client):
         self.mod_channels = {}  # Map from guild to the mod channel id for that guild
         self.reports = {}  # Map from user IDs to the state of their report
         self.mod_reports = {}  # Map from thread IDs to the state of their report
+
+        self.hash_db = HashDB.load()
 
         self.client = genai.Client(api_key=API_KEY)
 
