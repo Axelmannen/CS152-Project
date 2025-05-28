@@ -5,6 +5,7 @@ import random
 
 NORMAL_PRIORITY_EMOJI = "🟨"
 HIGH_PRIORITY_EMOJI = "🟥"
+IN_PROGRESS_EMOJI = "🔄"
 COMPLETED_EMOJI = "✅"
 
 class State(Enum):
@@ -34,7 +35,7 @@ INTERACTIVE_STATES = {
 Note: CSAM content involves individuals under 18 years old, and includes any of: 
 - Sexual intercourse
 - Bestiality
-- Masturbaation
+- Masturbation
 - Sadistic or masochistic abuse
 - Lascivious exhibition of the anus, genitals, or pubic area of any person (if unsure, apply Dost Test)""",
         "options": [
@@ -68,6 +69,8 @@ class ModReport:
         self.thread_parent_message = thread_parent_message
         self.reported_user_id = reported_user_id
         self.bot_user_id = bot_user_id
+        self.in_progress_by = None  # discord.User.id of the claiming moderator
+        self.lock_message = None
         self.state = None
         self.latest_bot_message = None
         self.report = report
@@ -107,7 +110,7 @@ class ModReport:
 
         if state in INTERACTIVE_STATES:
 
-            prompt = f"**{INTERACTIVE_STATES[self.state]["prompt"]}**"
+            prompt = f"**{INTERACTIVE_STATES[self.state]['prompt']}**"
             options = INTERACTIVE_STATES[self.state]["options"]
 
             select = Select(
@@ -136,6 +139,7 @@ class ModReport:
         elif state == State.REPORT_COMPLETE:
             await self.thread_parent_message.clear_reaction(HIGH_PRIORITY_EMOJI)
             await self.thread_parent_message.clear_reaction(NORMAL_PRIORITY_EMOJI)
+            await self.thread_parent_message.clear_reaction(IN_PROGRESS_EMOJI)  
             await self.thread_parent_message.add_reaction(COMPLETED_EMOJI)
             await self.thread.send("Review complete. Archiving thread.")
             await self.thread.edit(archived=True, locked=True)
@@ -159,6 +163,14 @@ class ModReport:
         else:
             raise ValueError(f"Invalid state: {state}")
 
+    async def show_review_reminder(self):
+        if self.lock_message:
+            try:
+                await self.lock_message.delete()
+            except discord.NotFound:
+                pass
+        self.lock_message = await self.thread.send(f"🔒 This thread is currently under review by <@{self.in_progress_by}>.")
+
 
     async def delete_reported_message(self):
         try:
@@ -172,7 +184,32 @@ class ModReport:
             await self.thread.send(f"⚠️ Error deleting message: {str(e)}")
 
     async def handle_selection(self, interaction: discord.Interaction, picked: str):
-        await interaction.response.defer()  # defer the response to prevent timeout
+        print(f"[DEBUG] in_progress_by: {self.in_progress_by} ({type(self.in_progress_by)})")
+        print(f"[DEBUG] interaction.user.id: {interaction.user.id} ({type(interaction.user.id)})")
+
+        # Block any interaction if the user is not the assigned reviewer
+        if self.in_progress_by is not None and interaction.user.id != self.in_progress_by:
+            await interaction.response.send_message(
+                f"⛔️ This report is currently being handled by <@{self.in_progress_by}>.",
+                ephemeral=True
+            )
+            await self.show_review_reminder()
+            return
+        # If the user is the assigned reviewer, allow them to proceed
+        # Automatically claim the report if not already claimed
+        if not self.in_progress_by:
+            self.in_progress_by = interaction.user.id
+            print(f"[DEBUG] Claimed report. New in_progress_by set to: {self.in_progress_by}")
+            await self.thread_parent_message.add_reaction(IN_PROGRESS_EMOJI)
+            await self.thread.send(f"🔄 Marked in progress by <@{interaction.user.id}>.")
+            await self.show_review_reminder()  # Show the reminder visibly in the thread
+
+        # Remind others if they try to interact while not the reviewer
+        if interaction.user.id != self.in_progress_by:
+            await self.show_review_reminder()
+
+        await interaction.response.defer()
+
 
         if self.state == State.IS_AI_CSAM:
             if picked == "yes":

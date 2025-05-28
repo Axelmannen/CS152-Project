@@ -3,8 +3,8 @@ import os
 import json
 import logging
 from report import Report, ReasonDropdownView, State  # Added State import
-from mod_report import ModReport
-from google import genai
+from mod_report import ModReport, IN_PROGRESS_EMOJI
+from google import genai  
 from typing import Optional
 from dotenv import load_dotenv
 
@@ -155,6 +155,59 @@ class ModBot(discord.Client):
                     await reporting_user.send(view=ReasonDropdownView(report))
                 except discord.Forbidden:
                     print(f"[Error] Cannot DM user {reporting_user.name}. They likely have DMs disabled.")
+            elif payload.emoji.name == IN_PROGRESS_EMOJI:
+                user = self.get_user(payload.user_id)
+                if not user:
+                    user = await self.fetch_user(payload.user_id)
+
+                message = await channel.fetch_message(payload.message_id)
+
+                for mod_report in self.mod_reports.values():
+                    if mod_report.thread_parent_message.id == message.id:
+                        if mod_report.in_progress_by:
+                            await channel.send(f"🔒 Already in progress by <@{mod_report.in_progress_by}>.")
+                            await message.remove_reaction(IN_PROGRESS_EMOJI, user)
+                        else:
+                            mod_report.in_progress_by = user.id
+                            await channel.send(f"✅ Claimed by <@{user.id}>.")
+                        break
+
+    async def on_raw_reaction_remove(self, payload):
+        if payload.user_id == self.user.id:
+            return
+
+        if payload.emoji.name != IN_PROGRESS_EMOJI:
+            return
+
+        # Get the channel
+        channel = self.get_channel(payload.channel_id)
+        if not channel:
+            channel = await self.fetch_channel(payload.channel_id)
+
+        if not isinstance(channel, discord.TextChannel) or channel.name != f"group-{GROUP_NUM}-mod":
+            # Ignore reactions in channels other than the mod channel
+            return
+
+        message = await channel.fetch_message(payload.message_id)
+
+        for mod_report in self.mod_reports.values():
+            if mod_report.thread_parent_message.id == message.id:
+                if mod_report.in_progress_by == payload.user_id:
+                    mod_report.in_progress_by = None
+                    await mod_report.thread.edit(locked=False)
+                    await channel.send(f"🔓 Unclaimed by <@{payload.user_id}>.")
+                    if mod_report.lock_message:
+                        try:
+                            await mod_report.lock_message.delete()
+                        except discord.NotFound:
+                            pass
+                        mod_report.lock_message = None
+                else:
+                    user = self.get_user(payload.user_id)
+                    if not user:
+                        user = await self.fetch_user(payload.user_id)
+                    await message.remove_reaction(IN_PROGRESS_EMOJI, user)
+                break
 
     async def get_ai_classification(self, message: discord.Message) -> Optional[str]:
         try:
