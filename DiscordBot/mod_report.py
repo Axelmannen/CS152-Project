@@ -19,6 +19,7 @@ class State(Enum):
     RUN_AI_CLASSIFIER = auto()
     MANUAL_IS_IT_AI_CSAM = auto()
     MANUAL_IS_IT_CSAM = auto()
+    AWAITING_CONFIRMATION = auto()
 
     REPORT_COMPLETE = auto()
     
@@ -42,6 +43,12 @@ Note: CSAM content involves individuals under 18 years old, and includes any of:
         "options": [
             discord.SelectOption(label="Yes", value="yes"),
             discord.SelectOption(label="No", value="no"),
+        ]
+    },
+    State.AWAITING_CONFIRMATION: {
+        "prompt": "Final confirmation: Has the NCMEC report been sent and this case fully reviewed?",
+        "options": [
+            discord.SelectOption(label="Yes, mark complete", value="confirm_done"),
         ]
     },
     State.NON_CSAM_DECIDE_ACTION: {
@@ -170,7 +177,7 @@ class ModReport:
                     await self.thread.send("Removing post permanently and placing account under monitoring.")
                     await self.delete_reported_message()
                     await self.thread.send("⚠️ Please report to NCMEC and include the hash.")
-                    await self.set_state(State.REPORT_COMPLETE)
+                    await self.set_state(State.AWAITING_CONFIRMATION)
                 else:
                     await self.thread.send("No match found. Manual review required.")
                     await self.set_state(State.MANUAL_IS_IT_CSAM)
@@ -207,9 +214,6 @@ class ModReport:
             await self.thread.send(f"⚠️ Error deleting message: {str(e)}")
 
     async def handle_selection(self, interaction: discord.Interaction, picked: str):
-        print(f"[DEBUG] in_progress_by: {self.in_progress_by} ({type(self.in_progress_by)})")
-        print(f"[DEBUG] interaction.user.id: {interaction.user.id} ({type(interaction.user.id)})")
-
         # Block any interaction if the user is not the assigned reviewer
         if self.in_progress_by is not None and interaction.user.id != self.in_progress_by:
             await interaction.response.send_message(
@@ -222,7 +226,6 @@ class ModReport:
         # Automatically claim the report if not already claimed
         if not self.in_progress_by:
             self.in_progress_by = interaction.user.id
-            print(f"[DEBUG] Claimed report. New in_progress_by set to: {self.in_progress_by}")
             await self.thread_parent_message.add_reaction(IN_PROGRESS_EMOJI)
             await self.thread.send(f"🔄 Marked in progress by <@{interaction.user.id}>.")
             await self.show_review_reminder()  # Show the reminder visibly in the thread
@@ -240,13 +243,13 @@ class ModReport:
                 phash = await get_phash_from_discord_attachment(self.file)
                 self.hash_db.add_record(HashRecord(phash, ai_generated=AIGeneratedOption.YES))  
                 await self.thread.send("⚠️ Please report to NCMEC and indicate that the content is likely AI-generated.")
-                await self.set_state(State.REPORT_COMPLETE)
+                await self.set_state(State.AWAITING_CONFIRMATION)
             elif picked == "no":
                 await self.thread.send("Hashing CSAM content and adding it to internal database.")
                 phash = await get_phash_from_discord_attachment(self.file)
                 self.hash_db.add_record(HashRecord(phash, ai_generated=AIGeneratedOption.NO))  
                 await self.thread.send("⚠️ Please report to NCMEC and include the hash.")
-                await self.set_state(State.REPORT_COMPLETE)
+                await self.set_state(State.AWAITING_CONFIRMATION)
 
         elif self.state == State.MANUAL_IS_IT_CSAM:
             if picked == "yes":
@@ -256,6 +259,11 @@ class ModReport:
             elif picked == "no":
                 await self.thread.send("Restoring temporarily removed content.")
                 await self.thread.send("Reporting user will be automatically warned/banned if systematically sending false reports.")
+                await self.set_state(State.REPORT_COMPLETE)
+
+        elif self.state == State.AWAITING_CONFIRMATION:
+            if picked == "confirm_done":
+                await self.thread.send("Confirmation received. Marking report as complete.")
                 await self.set_state(State.REPORT_COMPLETE)
 
         elif self.state == State.NON_CSAM_DECIDE_ACTION:
