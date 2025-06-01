@@ -2,12 +2,47 @@ from enum import Enum, auto
 import discord
 from discord.ui import View, Select
 import random
+import asyncio
+import re
 from hashing import HashDB, AIGeneratedOption, HashRecord, get_phash_from_discord_attachment
 
 NORMAL_PRIORITY_EMOJI = "🟨"
 HIGH_PRIORITY_EMOJI = "🟥"
 IN_PROGRESS_EMOJI = "🔄"
 COMPLETED_EMOJI = "✅"
+
+GEMINI_TEXT_CLASSIFIER_PROMPT = """
+You're an expert in detecting AI-generated content, especially social media captions or prompts used to generate images with tools like DALL·E, Midjourney, Imagen, or Stable Diffusion.
+
+Analyze the caption below and determine if it contains any of the following:
+- A prompt-like structure (e.g., "portrait of a girl in ultra HD", "3D render of...")
+- Mentions of generative AI tools or hashtags (e.g., #dalle2, #midjourney, #stablediffusion)
+- Language that appears to be describing an AI-generated image (not a personal experience)
+
+
+---
+
+**Output Format**
+
+Classification: [0 / 1 / Don't know]
+- 0 = Human-written, non-AI-related caption
+- 1 = Likely associated with AI-generated content
+- Don't know = Caption is ambiguous or lacks clear indicators
+
+Confidence Score: [X]%
+- Provide a percentage (0-100%) indicating your confidence in the binary classification.
+
+Brief Justification:
+- In 2–3 concise sentences, explain the most significant reasons for your classification. Focus on structural, linguistic, or hashtag clues. Do not just restate the task description.
+
+---
+
+**Important Guidance**:
+- If confidence is low or evidence is unclear, prefer “Don't know”.
+- Weigh multiple subtle AI indicators more strongly than a single obvious one.
+- Be cautious: some real captions may use odd phrasing without being AI-related.
+- Prioritize linguistic patterns, keyword usage, and formatting common in AI prompts.
+"""
 
 class State(Enum):
     INITIAL_CSAM = auto()
@@ -17,6 +52,7 @@ class State(Enum):
     INITIAL_NON_CSAM = auto()
     HASH_MATCH = auto()
     RUN_AI_CLASSIFIER = auto()
+    RUN_AI_TEXT_CLASSIFIER = auto()
     MANUAL_IS_IT_AI_CSAM = auto()
     MANUAL_IS_IT_CSAM = auto()
     AWAITING_CONFIRMATION = auto()
@@ -176,6 +212,11 @@ class ModReport:
 
                     await self.thread.send("Removing post permanently and placing account under monitoring.")
                     await self.delete_reported_message()
+
+                    # --- ML Classifier will now evaluate the content ---
+                    await self.set_state(State.RUN_AI_TEXT_CLASSIFIER)
+                    # ----------------------------------------------------
+
                     await self.thread.send("⚠️ Please report to NCMEC and include the hash.")
                     await self.set_state(State.AWAITING_CONFIRMATION)
                 else:
@@ -190,6 +231,44 @@ class ModReport:
             await self.thread.send("Running AI-generation detectors to help your decision...")
             await self.thread.send(f"Results: {random.random() * 100:.2f}% likely to be AI-generated.")
             await self.set_state(State.MANUAL_IS_IT_AI_CSAM)
+        elif state == State.RUN_AI_TEXT_CLASSIFIER:
+            if self.original_message and self.original_message.content.strip():
+                caption = self.original_message.content.strip()
+                prompt = GEMINI_TEXT_CLASSIFIER_PROMPT
+                parts = [{"text": f"{prompt}\n\nCaption:\n\"\"\"{caption}\"\"\""}]
+
+                response = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: self.report.client.client.models.generate_content(
+                        model="gemini-2.0-flash",
+                        contents=[{"role": "user", "parts": parts}]
+                    )
+                )
+
+                gemini_output = response.text.strip()
+                classification_match = re.search(r"Classification:\s*(\[?(\d|Don't know)\]?)", gemini_output)
+                confidence_match = re.search(r"Confidence Score:\s*\[?(\d+)%?", gemini_output)
+                justification_match = re.search(r"Brief Justification:\s*(.*)", gemini_output, re.DOTALL)
+
+                label = classification_match.group(1) if classification_match else "N/A"
+                confidence = confidence_match.group(1) if confidence_match else "N/A"
+                justification = justification_match.group(1).strip() if justification_match else gemini_output
+
+                label_display_map = {
+                    "0": "Likely NOT AI-generated",
+                    "1": "Likely AI-generated",
+                    "Don't know": "Unclear"
+                }
+                label_display = label_display_map.get(label, label)
+
+
+                await self.thread.send(
+                    f"**Gemini Text Classification**\n"
+                    f"**Classification**: {label_display} (`{label}`)\n"
+                    f"**Confidence**: `{confidence}%`\n"
+                    f"**Justification**: {justification}"ch
+                )
+
         else:
             raise ValueError(f"Invalid state: {state}")
 
