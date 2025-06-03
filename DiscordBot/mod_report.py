@@ -5,6 +5,15 @@ import random
 import asyncio
 import re
 from hashing import HashDB, AIGeneratedOption, HashRecord, get_phash_from_discord_attachment
+from google import genai
+from google.genai.types import HttpOptions, Part
+from pathlib import Path
+import tempfile
+import asyncio
+import os
+import mimetypes
+import sys
+
 
 NORMAL_PRIORITY_EMOJI = "🟨"
 HIGH_PRIORITY_EMOJI = "🟥"
@@ -44,6 +53,73 @@ Brief Justification:
 - Prioritize linguistic patterns, keyword usage, and formatting common in AI prompts.
 """
 
+GEMINI_IMAGE_CLASSIFIER_PROMPT = """
+You are an expert digital forensics analyst trained in Professor Hany Farid's methodologies for detecting AI-generated faces and explaining your decision. Analyze the provided facial image for signs of artificial generation.
+Examine the following categories systematically:
+1. Anatomical Integrity
+Count facial features (eyes, nostrils, ears, etc.) - are there duplicates or missing elements?
+Check for impossible anatomical configurations
+Verify natural placement and proportions of features
+Look for missing details (eyelashes, tear ducts, nasal hair, skin pores)
+2. Phenotypic Plausibility
+Assess if phenotypic combinations are statistically probable (e.g., skin tone vs. eye color)
+Check for impossible genetic combinations
+Verify age-appropriate features match across the face
+3. Geometric Consistency
+Analyze facial symmetry (natural faces are slightly asymmetric)
+Check perspective consistency across features
+Verify consistent facial landmark alignment
+Look for warping or morphing artifacts
+4. Texture and Detail Analysis
+Examine skin texture consistency and realism
+Check hair patterns for naturalness and consistent growth direction
+Verify consistent detail resolution across facial regions
+Look for smoothing or sharpening artifacts
+5. Ocular Examination
+Verify matching reflections in both eyes
+Check iris pattern complexity and uniqueness
+Examine pupil shape and size consistency
+Look for natural eye moisture and blood vessels
+6. Lighting and Shadow Coherence
+Verify consistent light source direction across all features
+Check shadow placement and softness
+Examine specular highlights for consistency
+Look for impossible lighting conditions
+7. Edge and Transition Analysis
+Examine face-to-background transitions
+Check for halo effects or unnatural boundaries
+Verify natural hair-to-skin transitions
+Look for copy-paste or blending artifacts
+
+Output Format:
+
+
+Classification: [0/1/Don't know]
+0 = Real/authentic face
+1 = AI-generated face
+Don't know = Insufficient information or ambiguous indicators
+Confidence Score: [X]% Provide a percentage (0-100%) indicating your confidence in the binary classification.
+
+Brief Justification: In 2-3 sentences, cite the most significant indicators that led to your classification. Keep this concise but be formal and professional. 
+Important Notes:
+If image quality is too low to make reliable assessments, output "Don't know"
+Weight multiple subtle anomalies more heavily than single obvious features
+Consider that some real faces may have unusual features due to medical conditions, cosmetic procedures, or rare genetics
+Focus on patterns consistent with known GAN, diffusion model, or other AI generation artifacts
+
+
+Always give a 2-3 sentence justification for your decision. This is a very important part of your role.
+
+"""
+
+API_KEY = os.getenv("API_KEY")
+PROJECT_ID = os.getenv("PROJECT_ID") 
+LOCATION = "us-central1" 
+tuning_job_id = os.getenv("tuning_job_id") 
+
+
+client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
+
 class State(Enum):
     INITIAL_CSAM = auto()
     NON_CSAM_DECIDE_ACTION = auto()
@@ -51,7 +127,7 @@ class State(Enum):
 
     INITIAL_NON_CSAM = auto()
     HASH_MATCH = auto()
-    RUN_AI_CLASSIFIER = auto()
+    RUN_AI_IMAGE_CLASSIFIER = auto()
     RUN_AI_TEXT_CLASSIFIER = auto()
     MANUAL_IS_IT_AI_CSAM = auto()
     MANUAL_IS_IT_CSAM = auto()
@@ -61,7 +137,7 @@ class State(Enum):
     
 INTERACTIVE_STATES = {
     State.MANUAL_IS_IT_AI_CSAM: {
-        "prompt": "Is this AI-generated CSAM?",
+        "prompt": "Given the above information, is this AI-generated CSAM?",
         "options": [
             discord.SelectOption(label="Yes", value="yes"),
             discord.SelectOption(label="No", value="no"),
@@ -213,10 +289,6 @@ class ModReport:
                     await self.thread.send("Removing post permanently and placing account under monitoring.")
                     await self.delete_reported_message()
 
-                    # --- ML Classifier will now evaluate the content ---
-                    await self.set_state(State.RUN_AI_TEXT_CLASSIFIER)
-                    # ----------------------------------------------------
-
                     await self.thread.send("⚠️ Please report to NCMEC and include the hash.")
                     await self.set_state(State.AWAITING_CONFIRMATION)
                 else:
@@ -226,11 +298,66 @@ class ModReport:
                 await self.thread.send("No attachment found. Manual review required.")
                 await self.set_state(State.MANUAL_IS_IT_CSAM)
 
-        elif state == State.RUN_AI_CLASSIFIER:
+        elif state == State.RUN_AI_IMAGE_CLASSIFIER:
             # Real classifier to be implemented for Milestone 3
-            await self.thread.send("Running AI-generation detectors to help your decision...")
-            await self.thread.send(f"Results: {random.random() * 100:.2f}% likely to be AI-generated.")
-            await self.set_state(State.MANUAL_IS_IT_AI_CSAM)
+            if self.file is None:
+                await self.thread.send("⚠️ No image attached—cannot run the AI image classifier.")
+                return
+
+            try:
+                image_bytes = await self.file.read()
+            except Exception as e:
+                await self.thread.send(f"Failed to read attachment: {e}")
+                return
+
+            mime_type = (
+                self.file.content_type
+                or mimetypes.guess_type(self.file.filename)[0]
+                or "application/octet-stream"
+            )
+
+            # Instead of uploading to Gemini Dev, build a Part from bytes and send directly.
+
+            # 1) Derive suffix exactly as before:
+            filename = getattr(self.file, "filename", None)
+            if filename:
+                suffix = Path(filename).suffix
+            else:
+                suffix = mimetypes.guess_extension(mime_type) or ""
+
+            # 2) Build a Part() directly from the raw bytes:
+            #    (The Part type is imported from google.genai.types.Part)
+            part = Part.from_bytes(data=image_bytes, mime_type=mime_type)
+
+            # 3) Call generate_content using that Part + your text PROMPT, no need to upload to a file.
+            tuning_job_name = f"projects/{PROJECT_ID}/locations/{LOCATION}/tuningJobs/{tuning_job_id}"
+            tuning_job = client.tunings.get(name=tuning_job_name)
+
+            response = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: client.models.generate_content(
+                    model= tuning_job.tuned_model.endpoint,
+                    contents=[part, GEMINI_IMAGE_CLASSIFIER_PROMPT]
+                )
+            )
+            ai_output = response.text.strip()
+            #print(ai_output)
+            lines = ai_output.split("\n")
+            non_empty_lines = [line for line in lines if line.strip() != ""]
+            classification = non_empty_lines[0]
+            confidence = non_empty_lines[1]
+            if len(non_empty_lines) >= 3:
+                justification = non_empty_lines[2]
+
+            await self.thread.send("\n **Output of image classifier: ** \n \n")
+
+            await self.thread.send(f"**Classification:** {"NOT AI-generated" if classification.strip() == '0' else "AI-generated"}")
+            if "confidence score" in confidence.lower():
+                await self.thread.send(f"`{confidence.rstrip("%")}%`")
+            else:
+                await self.thread.send(f"**Confidence:** `{confidence.rstrip("%")}%`")
+            if len(non_empty_lines) >= 3:
+                await self.thread.send(f"**Justification:** {justification}")
         elif state == State.RUN_AI_TEXT_CLASSIFIER:
             if self.original_message and self.original_message.content.strip():
                 caption = self.original_message.content.strip()
@@ -251,22 +378,25 @@ class ModReport:
                 justification_match = re.search(r"Brief Justification:\s*(.*)", gemini_output, re.DOTALL)
 
                 label = classification_match.group(1) if classification_match else "N/A"
+                label = label.strip("[]")
                 confidence = confidence_match.group(1) if confidence_match else "N/A"
                 justification = justification_match.group(1).strip() if justification_match else gemini_output
 
                 label_display_map = {
-                    "0": "Likely NOT AI-generated",
-                    "1": "Likely AI-generated",
+                    "0": "NOT AI-generated",
+                    "[0]": "NOT AI-generated",
+                    "[1]": "AI-generated", 
+                    "1": "AI-generated",
                     "Don't know": "Unclear"
                 }
                 label_display = label_display_map.get(label, label)
 
 
                 await self.thread.send(
-                    f"**Gemini Text Classification**\n"
-                    f"**Classification**: {label_display} (`{label}`)\n"
+                    f"**Output of text classifier:**\n \n"
+                    f"**Classification**: {label_display} \n"
                     f"**Confidence**: `{confidence}%`\n"
-                    f"**Justification**: {justification}"ch
+                    f"**Justification**: {justification}"
                 )
 
         else:
@@ -334,7 +464,12 @@ class ModReport:
             if picked == "yes":
                 await self.delete_reported_message()
                 await self.thread.send("Reported for CSAM.")
-                await self.set_state(State.RUN_AI_CLASSIFIER)
+                # --- ML Classifier will now evaluate the content ---
+                await self.thread.send("Next, we will determine if the CSAM content is AI-generated.")
+                await self.thread.send("Running AI-generation detectors to help your decision...")
+                await self.set_state(State.RUN_AI_TEXT_CLASSIFIER)
+                await self.set_state(State.RUN_AI_IMAGE_CLASSIFIER)
+                    # ----------------------------------------------------
             elif picked == "no":
                 await self.thread.send("Restoring temporarily removed content.")
                 await self.thread.send("Reporting user will be automatically warned/banned if systematically sending false reports.")
