@@ -113,9 +113,9 @@ Always give a 2-3 sentence justification for your decision. This is a very impor
 """
 
 API_KEY = os.getenv("API_KEY")
-PROJECT_ID = os.getenv("PROJECT_ID") 
+PROJECT_ID = os.getenv("PROJECT_ID")
 LOCATION = "us-central1" 
-tuning_job_id = os.getenv("tuning_job_id") 
+tuning_job_id = os.getenv("tuning_job_id")
 
 
 client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
@@ -358,6 +358,8 @@ class ModReport:
                 await self.thread.send(f"**Confidence:** `{confidence.rstrip("%")}%`")
             if len(non_empty_lines) >= 3:
                 await self.thread.send(f"**Justification:** {justification}")
+        
+        
         elif state == State.RUN_AI_TEXT_CLASSIFIER:
             if self.original_message and self.original_message.content.strip():
                 caption = self.original_message.content.strip()
@@ -391,13 +393,13 @@ class ModReport:
                 }
                 label_display = label_display_map.get(label, label)
 
-
                 await self.thread.send(
                     f"**Output of text classifier:**\n \n"
                     f"**Classification**: {label_display} \n"
                     f"**Confidence**: `{confidence}%`\n"
                     f"**Justification**: {justification}"
                 )
+                await self.set_state(State.RUN_AI_IMAGE_CLASSIFIER)
 
         else:
             raise ValueError(f"Invalid state: {state}")
@@ -449,14 +451,16 @@ class ModReport:
         if self.state == State.MANUAL_IS_IT_AI_CSAM:
             if picked == "yes":
                 await self.thread.send("Hashing CSAM content and adding it to internal database.")
-                phash = await get_phash_from_discord_attachment(self.file)
-                self.hash_db.add_record(HashRecord(phash, ai_generated=AIGeneratedOption.YES))  
+                if self.file:
+                    phash = await get_phash_from_discord_attachment(self.file)
+                    self.hash_db.add_record(HashRecord(phash, ai_generated=AIGeneratedOption.YES))  
                 await self.thread.send("⚠️ Please report to NCMEC and indicate that the content is likely AI-generated.")
                 await self.set_state(State.AWAITING_CONFIRMATION)
             elif picked == "no":
                 await self.thread.send("Hashing CSAM content and adding it to internal database.")
-                phash = await get_phash_from_discord_attachment(self.file)
-                self.hash_db.add_record(HashRecord(phash, ai_generated=AIGeneratedOption.NO))  
+                if self.file:
+                    phash = await get_phash_from_discord_attachment(self.file)
+                    self.hash_db.add_record(HashRecord(phash, ai_generated=AIGeneratedOption.NO))  
                 await self.thread.send("⚠️ Please report to NCMEC and include the hash.")
                 await self.set_state(State.AWAITING_CONFIRMATION)
 
@@ -468,7 +472,8 @@ class ModReport:
                 await self.thread.send("Next, we will determine if the CSAM content is AI-generated.")
                 await self.thread.send("Running AI-generation detectors to help your decision...")
                 await self.set_state(State.RUN_AI_TEXT_CLASSIFIER)
-                await self.set_state(State.RUN_AI_IMAGE_CLASSIFIER)
+                await self.set_state(State.MANUAL_IS_IT_AI_CSAM)
+
                     # ----------------------------------------------------
             elif picked == "no":
                 await self.thread.send("Restoring temporarily removed content.")
