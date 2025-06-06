@@ -142,7 +142,7 @@ class SubreasonDropdown(Select):
         # nudity or sexual activity flow
         elif reason == "Nudity or sexual activity":
             await interaction.response.send_message(
-                "Does the content appear involve someone under 18?",
+                "Does the content appear to involve someone under 18?",
                 view=FollowUpView(self.report, "Suspected CSAM", ["Yes", "No"]),
             )
 
